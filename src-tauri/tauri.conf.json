@@ -3,6 +3,9 @@
   "productName": "metrix-studio",
   "version": "0.1.0",
   "identifier": "nexepic",
+  "plugins": {
+    "os": {}
+  },
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -10,18 +13,24 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "metrix-studio",
-        "width": 800,
-        "height": 600
+        "title": "Metrix Studio",
+        "width": 1200,
+        "height": 800,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": true,
+        "shadow": false,
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 20
+        }
       }
     ],
     "security": {
-      "csp": null,
-      "capabilities": [
-        "default"
-      ]
+      "csp": null
     }
   },
   "bundle": {
