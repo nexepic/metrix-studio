@@ -1,28 +1,13 @@
-import React, {useEffect, useState} from 'react';
+import React, {useState} from 'react';
 import {Search, X, Minus, Square} from 'lucide-react';
 import {getCurrentWindow} from '@tauri-apps/api/window';
-import {type as osType} from '@tauri-apps/plugin-os';
 
 export const TitleBar: React.FC = () => {
     const appWindow = getCurrentWindow();
     // Use navigator as initial fallback to prevent flash
-    const [isMacOS, setIsMacOS] = useState<boolean>(
+    const [isMacOS] = useState<boolean>(
         () => navigator.userAgent.toLowerCase().includes('mac')
     );
-
-    useEffect(() => {
-        const initOS = async () => {
-            try {
-                const type = await osType();
-                console.log("[System] Detected OS:", type);
-                setIsMacOS(type === 'macos');
-            } catch (e) {
-                console.error("[System] Failed to detect OS via plugin:", e);
-                setIsMacOS(navigator.userAgent.toLowerCase().includes('mac'));
-            }
-        };
-        initOS();
-    }, []);
 
     const handleClose = () => appWindow.close();
     const handleMinimize = () => appWindow.minimize();

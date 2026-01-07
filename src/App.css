@@ -37,9 +37,16 @@
         @apply border-border outline-ring/50;
     }
 
-    body {
+    /* FIX: Prevent elastic scrolling on the whole app */
+    html, body {
         @apply bg-background text-foreground antialiased selection:bg-primary/30 selection:text-primary-foreground;
         font-feature-settings: "rlig" 1, "calt" 1;
+
+        /* Critical for desktop-like feel */
+        overscroll-behavior: none;
+        overflow: hidden;
+        height: 100vh;
+        width: 100vw;
     }
 }
 

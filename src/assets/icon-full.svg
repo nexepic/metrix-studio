@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+        width="150"
+        height="150"
+        viewBox="0 0 150 150"
+        xmlns="http://www.w3.org/2000/svg"
+>
+    <rect
+            x="9"
+            y="9"
+            width="132"
+            height="132"
+            rx="30"
+            fill="#000000"
+    />
+    <g
+            fill="#818cf8"
+            transform="translate(8 8) scale(0.90)"
+    >
+        <polygon points="33.6,52 43.9,62.3 85.3,62.3 95.6,52"/>
+        <polygon points="64.6,67.5 33.6,98.5 49.1,98.5 80.1,67.5"/>
+        <polygon points="100.8,52 69.8,83 85.3,83 116.3,52"/>
+        <polygon points="64.6,88.2 54.3,98.5 116.3,98.5 106,88.2"/>
+    </g>
+</svg>
