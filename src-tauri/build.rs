@@ -67,7 +67,9 @@ fn main() {
         .allowlist_function("metrix_.*")
         .allowlist_var("MX_.*")
         // Generate proper Rust enums instead of const integers
-        .default_enum_style(bindgen::EnumVariation::Rust { non_exhaustive: false })
+        .default_enum_style(bindgen::EnumVariation::Rust {
+            non_exhaustive: false,
+        })
         // Remove "MetrixValueType_" prefix from variants
         // This means inside the enum, it will just be MX_NODE, not MetrixValueType_MX_NODE
         .prepend_enum_name(false)

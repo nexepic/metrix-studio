@@ -1,147 +1,128 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
-import { GraphNode, GraphEdge, HistoryItem, QueryResult } from '@/types';
-import { invoke } from '@tauri-apps/api/core';
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { GraphNode, GraphEdge, HistoryItem } from '@/types';
+import { DatabaseApi } from '@/api/database';
 
-// --- Type Definitions ---
 interface AppState {
-    // --- Connection State ---
     dbPath: string | null;
     isConnected: boolean;
-
-    // --- Left Layout State ---
     activeLeftTab: 'explorer' | 'search' | 'settings';
     isLeftSidebarOpen: boolean;
     toggleLeftSidebar: (tab: 'explorer' | 'search' | 'settings') => void;
-
-    // --- Right Layout State (Split Pane) ---
-    // Top Slot: Can hold 'properties' OR 'history' (mutually exclusive)
     activeTopPanel: 'properties' | 'history' | null;
-    // Bottom Slot: Can hold 'analysis'
     activeBottomPanel: 'analysis' | null;
-    // Computed: True if either slot has an active panel
     isRightSidebarOpen: boolean;
-
     toggleTopPanel: (panel: 'properties' | 'history') => void;
     toggleBottomPanel: (panel: 'analysis') => void;
-
-    // --- Data State ---
     query: string;
     graphData: { nodes: GraphNode[]; links: GraphEdge[] };
     selectedElement: GraphNode | GraphEdge | null;
     selectionType: 'node' | 'edge' | null;
     history: HistoryItem[];
+    recentFiles: string[]; // Added Recent Files State
 
-    // --- Actions ---
     connectDatabase: (path: string) => Promise<void>;
     disconnectDatabase: () => Promise<void>;
-    runQuery: () => Promise<void>;
+    runQuery: (overrideQuery?: string) => Promise<void>;
     setQuery: (q: string) => void;
     setSelection: (el: GraphNode | GraphEdge | null, type: 'node' | 'edge' | null) => void;
 }
 
-// Create Context
 const AppContext = createContext<AppState | undefined>(undefined);
 
-// --- Provider Implementation ---
 export const AppProvider = ({ children }: { children: ReactNode }) => {
-
-    // --- Data State ---
+    // State
     const [dbPath, setDbPath] = useState<string | null>(null);
     const [query, setQuery] = useState("MATCH (n)-[r]->(m) RETURN n,r,m LIMIT 50");
     const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; links: GraphEdge[] }>({ nodes: [], links: [] });
     const [history, setHistory] = useState<HistoryItem[]>([]);
-
-    // Selection State
+    const [recentFiles, setRecentFiles] = useState<string[]>([]);
     const [selectedElement, setSelectedElement] = useState<GraphNode | GraphEdge | null>(null);
     const [selectionType, setSelectionType] = useState<'node' | 'edge' | null>(null);
 
-    // --- Layout State ---
+    // Layout State
     const [activeLeftTab, setActiveLeftTab] = useState<'explorer' | 'search' | 'settings'>('explorer');
     const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
-
-    // Right Sidebar (Split View)
     const [activeTopPanel, setActiveTopPanel] = useState<'properties' | 'history' | null>('properties');
     const [activeBottomPanel, setActiveBottomPanel] = useState<'analysis' | null>(null);
-
-    // Computed: Is the container open?
     const isRightSidebarOpen = activeTopPanel !== null || activeBottomPanel !== null;
 
-    // --- Layout Actions ---
+    // Load Recents on Mount
+    useEffect(() => {
+        const saved = localStorage.getItem('metrix_recents');
+        if (saved) setRecentFiles(JSON.parse(saved));
+    }, []);
 
-    const toggleLeftSidebar = (tab: 'explorer' | 'search' | 'settings') => {
-        if (activeLeftTab === tab) {
-            setIsLeftSidebarOpen(!isLeftSidebarOpen);
-        } else {
-            setActiveLeftTab(tab);
-            setIsLeftSidebarOpen(true);
-        }
+    const addToRecents = (path: string) => {
+        setRecentFiles(prev => {
+            const next = [path, ...prev.filter(p => p !== path)].slice(0, 5); // Keep top 5
+            localStorage.setItem('metrix_recents', JSON.stringify(next));
+            return next;
+        });
     };
 
-    const toggleTopPanel = (panel: 'properties' | 'history') => {
-        if (activeTopPanel === panel) {
-            setActiveTopPanel(null); // Close if clicking active
-        } else {
-            setActiveTopPanel(panel); // Switch to new
-        }
-    };
-
-    const toggleBottomPanel = (panel: 'analysis') => {
-        if (activeBottomPanel === panel) {
-            setActiveBottomPanel(null); // Close if clicking active
-        } else {
-            setActiveBottomPanel(panel); // Open
-        }
-    };
-
-    // --- Data Actions ---
-
+    // Actions
     const connectDatabase = async (path: string) => {
         try {
-            await invoke("open_database", { path });
+            await DatabaseApi.connect(path);
             setDbPath(path);
-        } catch (e) {
-            console.error("Connection failed", e);
-            throw e;
-        }
+            addToRecents(path);
+        } catch (e) { throw e; }
     };
 
     const disconnectDatabase = async () => {
-        await invoke("close_database");
+        await DatabaseApi.disconnect();
         setDbPath(null);
         setGraphData({ nodes: [], links: [] });
     };
 
-    const runQuery = async () => {
+    const runQuery = async (overrideQuery?: string) => {
+        // Use override if provided, otherwise use current editor state
+        const queryToRun = overrideQuery || query;
+
+        // If it's an override (from history), update the editor UI too
+        if (overrideQuery) {
+            setQuery(overrideQuery);
+        }
+
         if (!dbPath) return;
+
         const start = Date.now();
         try {
-            const res = await invoke<QueryResult>("run_query", {query});
+            // Use the determined query string
+            const res = await DatabaseApi.query(queryToRun);
 
-            const processedData = {
-                nodes: res.nodes.map(n => ({...n, val: 5})),
-                links: res.edges.map(e => ({...e}))
-            };
-            setGraphData(processedData);
+            setGraphData({
+                nodes: res.nodes.map(n => ({ ...n })),
+                links: res.edges.map(e => ({ ...e }))
+            });
 
-            setHistory(prev => [{
-                id: crypto.randomUUID(),
-                query,
-                timestamp: Date.now(),
-                status: 'success',
-                duration: res.duration_ms,
-                resultCount: res.nodes.length // Assuming QueryResult has this
-            }, ...prev]);
+            setHistory(prev => {
+                // Check if the latest item is the same query
+                const lastItem = prev[0];
+                const newItem: HistoryItem = {
+                    id: crypto.randomUUID(),
+                    query: queryToRun,
+                    timestamp: Date.now(),
+                    status: 'success',
+                    duration: res.duration_ms,
+                    resultCount: res.nodes.length
+                };
+
+                // If same query string as last time, remove the old one and add new one to top (updates timestamp)
+                // Or if you strictly don't want to add it if it exists recently:
+                if (lastItem && lastItem.query === queryToRun) {
+                    return [newItem, ...prev.slice(1)]; // Replace top item
+                }
+
+                return [newItem, ...prev]; // Add new item
+            });
         } catch (e) {
-            console.error(e);
-
-            const errorDuration = Date.now() - start;
-
             setHistory(prev => [{
                 id: crypto.randomUUID(),
-                query,
+                query: queryToRun,
                 timestamp: Date.now(),
                 status: 'error',
-                duration: errorDuration,
+                duration: Date.now() - start,
                 resultCount: 0
             }, ...prev]);
         }
@@ -150,41 +131,32 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const setSelection = (el: GraphNode | GraphEdge | null, type: 'node' | 'edge' | null) => {
         setSelectedElement(el);
         setSelectionType(type);
-
-        // Auto-UX: If user selects an item, make sure the Properties panel is visible
-        if (el) {
-            setActiveTopPanel('properties');
-        }
+        if (el) setActiveTopPanel('properties');
     };
 
-    // --- Render ---
+    const toggleLeftSidebar = (tab: any) => {
+        if (activeLeftTab === tab) setIsLeftSidebarOpen(!isLeftSidebarOpen);
+        else { setActiveLeftTab(tab); setIsLeftSidebarOpen(true); }
+    };
+
+    const toggleTopPanel = (panel: any) => activeTopPanel === panel ? setActiveTopPanel(null) : setActiveTopPanel(panel);
+    const toggleBottomPanel = (panel: any) => activeBottomPanel === panel ? setActiveBottomPanel(null) : setActiveBottomPanel(panel);
+
     return (
         <AppContext.Provider value={{
-            // Connection
-            dbPath, isConnected: !!dbPath,
-            connectDatabase, disconnectDatabase,
-
-            // Left Layout
+            dbPath, isConnected: !!dbPath, recentFiles,
+            connectDatabase, disconnectDatabase, runQuery,
             activeLeftTab, isLeftSidebarOpen, toggleLeftSidebar,
-
-            // Right Layout (Split Pane)
-            activeTopPanel, activeBottomPanel, isRightSidebarOpen,
-            toggleTopPanel, toggleBottomPanel,
-
-            // Data
-            query, setQuery, runQuery,
-            graphData,
-            selectedElement, selectionType, setSelection,
-            history
+            activeTopPanel, activeBottomPanel, isRightSidebarOpen, toggleTopPanel, toggleBottomPanel,
+            query, setQuery, graphData, selectedElement, selectionType, setSelection, history
         }}>
             {children}
         </AppContext.Provider>
     );
 };
 
-// --- Custom Hook ---
 export const useApp = () => {
     const context = useContext(AppContext);
-    if (!context) throw new Error("useApp must be used within AppProvider");
+    if (!context) throw new Error("useApp error");
     return context;
 };

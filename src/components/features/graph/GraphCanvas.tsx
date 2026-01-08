@@ -1,35 +1,31 @@
-import React, {useEffect, useRef, useState} from 'react';
-import cytoscape, {Core, ElementDefinition} from 'cytoscape';
+import React, { useEffect, useRef, useState } from 'react';
+import cytoscape, { Core, ElementDefinition } from 'cytoscape';
 // @ts-ignore
 import cola from 'cytoscape-cola';
-import {useApp} from '@/context/AppStore';
-import {graphStyles, defaultLayout, generateNodeColor} from './graphConfig';
+import { useApp } from '@/context/AppStore';
+import { graphStyles, defaultLayout, generateNodeColor } from './graphConfig';
 import {
     MousePointerClick, ZoomIn, ZoomOut, Maximize,
     Layers, Search as SearchIcon, Expand, Minimize2
 } from 'lucide-react';
-import {graphEvents} from '@/lib/events';
+import { graphEvents } from '@/lib/events';
 
 // Register Layout Extension
 cytoscape.use(cola);
 
 export const GraphCanvas: React.FC = () => {
-    const {graphData, setSelection} = useApp();
+    const { graphData, setSelection } = useApp();
     const containerRef = useRef<HTMLDivElement>(null);
     const cyRef = useRef<Core | null>(null);
 
     // --- UI State ---
-    const [stats, setStats] = useState({nodes: 0, edges: 0});
+    const [stats, setStats] = useState({ nodes: 0, edges: 0 });
     const [searchTerm, setSearchTerm] = useState("");
     const [isSearchOpen, setIsSearchOpen] = useState(false);
 
     // --- Animation & Visibility State ---
     const [isFullscreen, setIsFullscreen] = useState(false);
-
-    // isGraphVisible controls the visual Opacity (Fade in/out)
     const [isGraphVisible, setIsGraphVisible] = useState(true);
-    // isGraphRendering controls CSS Visibility (display/paint)
-    // We separate this to ensure the element is REMOVED from the render tree during resize
     const [isGraphRendering, setIsGraphRendering] = useState(true);
 
     // --- 1. Initialize Cytoscape Instance ---
@@ -39,19 +35,15 @@ export const GraphCanvas: React.FC = () => {
         const cy = cytoscape({
             container: containerRef.current,
             style: graphStyles,
-            // Interaction settings
             maxZoom: 4,
             minZoom: 0.2,
             selectionType: 'single',
-            // Allow panning during init, we handle specific centering logic later
             userPanningEnabled: true,
         });
 
         cyRef.current = cy;
 
         // --- Event Binding ---
-
-        // Handle Node Click
         cy.on('tap', 'node', (evt) => {
             const node = evt.target;
             setSelection({
@@ -61,7 +53,6 @@ export const GraphCanvas: React.FC = () => {
             }, 'node');
         });
 
-        // Handle Edge Click
         cy.on('tap', 'edge', (evt) => {
             const edge = evt.target;
             const rawId = edge.id().replace('e', '');
@@ -72,7 +63,6 @@ export const GraphCanvas: React.FC = () => {
             }, 'edge');
         });
 
-        // Handle Background Click (Deselect)
         cy.on('tap', (evt) => {
             if (evt.target === cy) {
                 setSelection(null, null);
@@ -86,13 +76,13 @@ export const GraphCanvas: React.FC = () => {
             console.log("[GraphCanvas] Running Algo:", detail.algorithm);
 
             if (detail.algorithm === 'pagerank') {
-                const pr = cy.elements().pageRank({dampingFactor: 0.85, iterations: 50});
+                const pr = cy.elements().pageRank({ dampingFactor: 0.85, iterations: 50 });
                 cy.batch(() => {
                     cy.nodes().forEach(node => {
                         const rank = pr.rank(node);
                         const newSize = 20 + (rank * 100);
                         node.animate({
-                            style: {'width': newSize, 'height': newSize},
+                            style: { 'width': newSize, 'height': newSize },
                             duration: 500
                         });
                     });
@@ -100,7 +90,7 @@ export const GraphCanvas: React.FC = () => {
             }
 
             if (detail.algorithm === 'louvain') {
-                const dc = cy.elements().degreeCentralityNormalized({directed: false, weight: () => 1});
+                const dc = cy.elements().degreeCentralityNormalized({ directed: false, weight: () => 1 });
                 const centralityResult = dc as any;
                 cy.batch(() => {
                     cy.nodes().forEach(node => {
@@ -136,7 +126,7 @@ export const GraphCanvas: React.FC = () => {
 
         return () => {
             graphEvents.off('run-algorithm', handleAlgoEvent);
-            cy.destroy();
+            if (!cy.destroyed()) cy.destroy();
         };
     }, []);
 
@@ -181,91 +171,85 @@ export const GraphCanvas: React.FC = () => {
             }
         }
 
-        setStats({nodes: graphData.nodes.length, edges: graphData.links.length});
+        setStats({ nodes: graphData.nodes.length, edges: graphData.links.length });
 
     }, [graphData]);
 
-    // --- 3. The "Shutter" Transition Logic (Anti-Flicker) ---
+    // --- 3. ROBUST RESIZE OBSERVER (Fixes "Skewed Layout" on Exit Fullscreen) ---
+    // This watches the container size constantly. When the CSS transition finishes resizing the div,
+    // this observer triggers, ensuring the graph snaps to the new correct center.
+    useEffect(() => {
+        if (!containerRef.current || !cyRef.current) return;
+        const cy = cyRef.current;
+
+        const ro = new ResizeObserver(() => {
+            requestAnimationFrame(() => {
+                if (!cy.destroyed() && isGraphRendering) {
+                    cy.resize();
+                    // Fit only if visibility is stable to avoid jumping during shutter animation
+                    if (isGraphVisible) {
+                        cy.fit(undefined, 50);
+                    }
+                }
+            });
+        });
+
+        ro.observe(containerRef.current);
+        return () => ro.disconnect();
+    }, [isGraphRendering, isGraphVisible]);
+
+
+    // --- 4. The "Shutter" Transition Logic ---
     const toggleFullscreen = () => {
         const cy = cyRef.current;
         if (!cy) return;
 
-        // Phase 1: Fade Out (Visual)
-        // We start the opacity transition.
+        // Phase 1: Fade Out
         setIsGraphVisible(false);
 
-        // Phase 2: Remove from Render Tree (Hard Stop)
-        // Wait 200ms for the fade-out to act, then force visibility: hidden.
+        // Phase 2: Hide & Resize DOM
         setTimeout(() => {
-            setIsGraphRendering(false); // CSS: visibility: hidden
-
-            // Phase 3: Resize Container (Layout)
+            setIsGraphRendering(false);
             requestAnimationFrame(() => {
                 setIsFullscreen(prev => !prev);
             });
-        }, 250);
+        }, 200);
 
-        // Phase 4: Re-emerge (Reset & Fade In)
-        // Wait for the CSS transition of the container (approx 500ms) to finish.
+        // Phase 3: Re-emerge
         setTimeout(() => {
-            // A. Resize internal canvas bitmap (invisible to user)
+            // Force manual resize/fit before showing again
             cy.resize();
-
-            // B. Center the graph
             cy.fit(undefined, 50);
 
-            // C. Enable Rendering first (visibility: visible)
             setIsGraphRendering(true);
-
-            // D. Fade In (Opacity 0 -> 1)
             requestAnimationFrame(() => {
                 setIsGraphVisible(true);
             });
-
-        }, 800); // 250ms (Phase 2) + 500ms (Transition) + 50ms buffer
+        }, 750);
     };
 
-    // --- 4. Actions ---
+    // --- 5. Actions ---
+    const getCenter = (cy: Core) => ({ x: cy.width() / 2, y: cy.height() / 2 });
 
-    // FIX: Zoom towards the center of the viewport instead of the top-left origin.
     const handleZoomIn = () => {
         const cy = cyRef.current;
         if (!cy) return;
-
-        // Calculate the center of the viewport (rendered pixels)
-        const w = cy.width();
-        const h = cy.height();
-        const zoom = cy.zoom();
-
-        // Apply zoom relative to the center rendered position
-        cy.zoom({
-            level: zoom + 0.2,
-            renderedPosition: {x: w / 2, y: h / 2}
-        });
+        cy.zoom({ level: cy.zoom() + 0.2, renderedPosition: getCenter(cy) });
     };
 
-    // FIX: Zoom out from the center of the viewport.
     const handleZoomOut = () => {
         const cy = cyRef.current;
         if (!cy) return;
-
-        const w = cy.width();
-        const h = cy.height();
-        const zoom = cy.zoom();
-
-        cy.zoom({
-            level: zoom - 0.2,
-            renderedPosition: {x: w / 2, y: h / 2}
-        });
+        cy.zoom({ level: cy.zoom() - 0.2, renderedPosition: getCenter(cy) });
     };
 
     const handleFit = () => cyRef.current?.animate({
-        fit: {eles: cyRef.current.elements(), padding: 50},
+        fit: { eles: cyRef.current.elements(), padding: 50 },
         duration: 500
     } as any);
+
     const handleLayout = () => cyRef.current?.layout(defaultLayout).run();
 
-    // --- 5. Search Logic ---
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
         if (!cyRef.current || !searchTerm.trim()) return;
@@ -300,9 +284,6 @@ export const GraphCanvas: React.FC = () => {
             }
             `}
         >
-            {/*
-                Inner Container handling Visibility & Scale effects.
-            */}
             <div
                 ref={containerRef}
                 className={`
@@ -313,7 +294,7 @@ export const GraphCanvas: React.FC = () => {
                 `}
             />
 
-            {/* Empty State Overlay */}
+            {/* Empty State */}
             {stats.nodes === 0 && isGraphVisible && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                     <div className="p-4 rounded-full bg-zinc-900/50 border border-zinc-800/50 mb-4">
@@ -326,7 +307,7 @@ export const GraphCanvas: React.FC = () => {
                 </div>
             )}
 
-            {/* Toolbar Controls */}
+            {/* Toolbar */}
             <div
                 className={`
                     absolute top-4 right-4 flex flex-col gap-2 z-20 transition-all duration-300
@@ -354,7 +335,7 @@ export const GraphCanvas: React.FC = () => {
                 />
             </div>
 
-            {/* Search Bar Popup */}
+            {/* Search Bar */}
             {isSearchOpen && isGraphVisible && (
                 <div className="absolute top-4 right-16 z-20 animate-in slide-in-from-right-4 fade-in duration-200">
                     <form onSubmit={handleSearch}
@@ -375,7 +356,7 @@ export const GraphCanvas: React.FC = () => {
                 </div>
             )}
 
-            {/* Stats Overlay */}
+            {/* Stats */}
             {stats.nodes > 0 && isGraphVisible && (
                 <div
                     className="absolute bottom-4 right-4 pointer-events-none animate-in slide-in-from-bottom-2 fade-in z-20">
