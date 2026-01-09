@@ -18,40 +18,27 @@ unsafe impl Sync for MetrixDB {}
 impl MetrixDB {
     /// Opens the database safely with null pointer checks.
     pub fn open(path: &str) -> Result<Self, String> {
-        info!("Attempting to open database at path: {}", path);
-
         let c_path = CString::new(path).map_err(|_| "Invalid path string")?;
-
-        // 1. Call C API
         let ptr = unsafe { metrix_open(c_path.as_ptr()) };
 
-        // 2. CRITICAL VALIDATION
         if ptr.is_null() {
-            let err = Self::get_last_error();
-            error!("Failed to open database: {}", err);
-            return Err(err);
+            return Err(Self::get_last_error());
         }
-
-        info!("Database opened successfully.");
         Ok(Self { ptr })
     }
 
     pub fn open_if_exists(path: &str) -> Result<Self, String> {
-        info!("Attempting to open existing database at path: {}", path);
-
         let c_path = CString::new(path).map_err(|_| "Invalid path string")?;
 
-        // Call C API that only opens if the DB exists
         let ptr = unsafe { metrix_open_if_exists(c_path.as_ptr()) };
 
-        // Validate pointer
+        // If C++ returns nullptr, this block MUST trigger
         if ptr.is_null() {
-            let err = Self::get_last_error();
-            warn!("Database does not exist or failed to open: {}", err);
-            return Err(err);
+            let err_msg = Self::get_last_error();
+            println!("[Rust-Driver] Pointer is NULL. Error from C++: {}", err_msg);
+            return Err(err_msg);
         }
 
-        info!("Existing database opened successfully.");
         Ok(Self { ptr })
     }
 
