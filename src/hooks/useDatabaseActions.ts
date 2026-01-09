@@ -14,19 +14,31 @@ export const useDatabaseActions = () => {
                 multiple: false,
                 filters: [{
                     name: 'Metrix Database Files',
-                    // Add all valid extensions here
                     extensions: ['mx', 'db', 'bin']
                 }]
             });
 
-            if (selected) {
-                console.log("[System] Opening database:", selected);
-                await connectDatabase(selected);
-                return true;
+            if (selected && typeof selected === 'string') {
+                console.log("[System] Attempting to open:", selected);
+
+                try {
+                    // 1. Await the connection
+                    await connectDatabase(selected);
+
+                    // 2. Success! (State update in store triggers navigation)
+                    return true;
+
+                } catch (err: any) {
+                    // 3. Connection Failed - Show Error to User
+                    // Replace this with your UI Toast library if available
+                    console.error("Database Open Error:", err);
+                    alert(`Failed to open database:\n${err}`);
+                    return false;
+                }
             }
             return false;
         } catch (e) {
-            console.error("[System] Failed to open dialog:", e);
+            console.error("[System] Dialog Error:", e);
             return false;
         }
     };

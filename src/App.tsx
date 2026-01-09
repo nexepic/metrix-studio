@@ -1,14 +1,18 @@
-import {AppProvider, useApp} from './context/AppStore';
-import {TitleBar} from './components/layout/TitleBar';
-import {MainLayout} from './components/layout/MainLayout';
-import {WelcomeScreen} from './components/features/welcome/WelcomeScreen';
+import { AppProvider, useApp } from './context/AppStore';
+import { TitleBar } from './components/layout/TitleBar';
+import { MainLayout } from './components/layout/MainLayout';
+import { WelcomeScreen } from './components/features/welcome/WelcomeScreen';
 import './App.css';
 
-const AppView = () => {
-    const {isConnected} = useApp();
+const AppRouter = () => {
+    const { isConnected } = useApp();
+
     return (
-        <div className="flex-1 relative overflow-hidden flex flex-col">
-            {isConnected ? <MainLayout/> : <WelcomeScreen/>}
+        /*
+           If connected, we show the IDE. If not, the Welcome Screen.
+        */
+        <div className="h-screen w-screen overflow-hidden">
+            {isConnected ? <MainLayout /> : <WelcomeScreen />}
         </div>
     );
 };
@@ -16,10 +20,13 @@ const AppView = () => {
 function App() {
     return (
         <AppProvider>
-            {/* Main container with app-root class for artifact fix */}
-            <div className="app-root flex flex-col h-screen w-screen bg-zinc-950 text-foreground overflow-hidden">
-                <TitleBar/>
-                <AppView/>
+            {/*
+                The root is relative so the TitleBar can be 'absolute'
+                and float on top of the AppRouter content.
+            */}
+            <div className="relative h-screen w-screen bg-[#09090b] text-foreground overflow-hidden">
+                <TitleBar />
+                <AppRouter />
             </div>
         </AppProvider>
     );

@@ -13,7 +13,7 @@ export const MainLayout: React.FC = () => {
     const {isLeftSidebarOpen, isRightSidebarOpen} = useApp();
 
     return (
-        <div className="flex flex-col h-screen w-screen bg-[#09090b] text-foreground overflow-hidden">
+        <div className="flex flex-col h-full w-full bg-background overflow-hidden pt-10">
             <div className="flex-1 flex overflow-hidden">
                 {/* 2. Left Activity Bar */}
                 <LeftActivityBar/>
