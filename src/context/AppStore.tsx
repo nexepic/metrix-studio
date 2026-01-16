@@ -1,6 +1,6 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { GraphNode, GraphEdge, HistoryItem } from '@/types';
-import { DatabaseApi } from '@/api/database';
+import {createContext, useContext, useState, useEffect, ReactNode} from 'react';
+import {GraphNode, GraphEdge, HistoryItem} from '@/types';
+import {DatabaseApi} from '@/api/database';
 
 // --- Type Definitions ---
 interface AppState {
@@ -23,6 +23,8 @@ interface AppState {
 
     // --- Data State ---
     query: string;
+    lastError: string | null;
+    clearError: () => void;
     graphData: { nodes: GraphNode[]; links: GraphEdge[] };
     selectedElement: GraphNode | GraphEdge | null;
     selectionType: 'node' | 'edge' | null;
@@ -36,15 +38,19 @@ interface AppState {
     runQuery: (overrideQuery?: string) => Promise<void>;
     setQuery: (q: string) => void;
     setSelection: (el: GraphNode | GraphEdge | null, type: 'node' | 'edge' | null) => void;
+
+    activeResultView: 'graph' | 'table';
+    setActiveResultView: (view: 'graph' | 'table') => void;
+    queryResultMetadata: { columns: string[], rows: any[][] };
 }
 
 const AppContext = createContext<AppState | undefined>(undefined);
 
-export const AppProvider = ({ children }: { children: ReactNode }) => {
+export const AppProvider = ({children}: { children: ReactNode }) => {
     // --- Core Data State ---
     const [dbPath, setDbPath] = useState<string | null>(null);
     const [query, setQuery] = useState("MATCH (n)-[r]->(m) RETURN n,r,m LIMIT 50");
-    const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; links: GraphEdge[] }>({ nodes: [], links: [] });
+    const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; links: GraphEdge[] }>({nodes: [], links: []});
     const [history, setHistory] = useState<HistoryItem[]>([]);
     const [recentFiles, setRecentFiles] = useState<string[]>([]);
     const [selectedElement, setSelectedElement] = useState<GraphNode | GraphEdge | null>(null);
@@ -122,57 +128,89 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const disconnectDatabase = async () => {
         await DatabaseApi.disconnect();
         setDbPath(null);
-        setGraphData({ nodes: [], links: [] });
+        setGraphData({nodes: [], links: []});
         setSelectedElement(null);
         setSelectionType(null);
     };
 
     // --- Query Execution Logic ---
 
+    const [lastError, setLastError] = useState<string | null>(null);
+
+    const clearError = () => setLastError(null);
+
+    const updateHistory = (
+        queryStr: string,
+        status: 'success' | 'error',
+        duration: number,
+        resultCount: number
+    ) => {
+        setHistory(prev => {
+            // 1. Create the fresh history record
+            const newItem: HistoryItem = {
+                id: crypto.randomUUID(),
+                query: queryStr,
+                timestamp: Date.now(),
+                status,
+                duration,
+                resultCount
+            };
+
+            // 2. DEDUPLICATION: Remove the query if it exists ANYWHERE in the list.
+            // This prevents duplicates when re-running older queries from history.
+            const filteredHistory = prev.filter(item => item.query !== queryStr);
+
+            // 3. Return the new item at the top, followed by the rest of the history.
+            // We limit to 50 items to maintain performance and UI cleanliness.
+            return [newItem, ...filteredHistory].slice(0, 50);
+        });
+    };
+
+    const [activeResultView, setActiveResultView] = useState<'graph' | 'table'>('graph');
+    const [queryResultMetadata, setQueryResultMetadata] = useState<{ columns: string[], rows: any[][] }>({ columns: [], rows: [] });
+
     const runQuery = async (overrideQuery?: string) => {
         const queryToRun = overrideQuery || query;
-        if (overrideQuery) setQuery(overrideQuery);
-
         if (!dbPath) return;
+
+        // Reset error state at the start of a new execution
+        setLastError(null);
         const start = Date.now();
 
         try {
+            // 1. Execute via API
             const res = await DatabaseApi.query(queryToRun);
 
-            // Transform data (Ensure deep copy for Cytoscape reactivity)
+            setQueryResultMetadata({ columns: res.columns, rows: res.rows });
+
+            if (res.nodes.length === 0 && res.rows.length > 0) {
+                setActiveResultView('table');
+            } else {
+                setActiveResultView('graph');
+            }
+
+            // 2. Update Graph Visuals
             setGraphData({
-                nodes: res.nodes.map(n => ({ ...n })),
-                links: res.edges.map(e => ({ ...e }))
+                nodes: res.nodes.map(n => ({...n})),
+                links: res.edges.map(e => ({...e}))
             });
 
-            // Update History with Deduplication
-            setHistory(prev => {
-                const newItem: HistoryItem = {
-                    id: crypto.randomUUID(),
-                    query: queryToRun,
-                    timestamp: Date.now(),
-                    status: 'success',
-                    duration: res.duration_ms,
-                    resultCount: res.nodes.length
-                };
-                // If the most recent query is identical, replace it to refresh the timestamp
-                if (prev.length > 0 && prev[0].query === queryToRun) {
-                    return [newItem, ...prev.slice(1)];
-                }
-                return [newItem, ...prev];
-            });
+            // 3. Log Success in History (with deduplication)
+            updateHistory(queryToRun, 'success', res.duration_ms, res.nodes.length);
 
-        } catch (e) {
-            // Log error in history
-            setHistory(prev => [{
-                id: crypto.randomUUID(),
-                query: queryToRun,
-                timestamp: Date.now(),
-                status: 'error',
-                duration: Date.now() - start,
-                resultCount: 0
-            }, ...prev]);
-            throw e;
+            // 4. Sync current query string with the editor if it came from an override (history click)
+            if (overrideQuery) setQuery(overrideQuery);
+
+        } catch (err: any) {
+            // 1. Extract error message
+            const errorMsg = typeof err === 'string' ? err : (err?.message || "Execution failed");
+            const duration = Date.now() - start;
+
+            // 2. Set UI Error state (displays the red banner)
+            setLastError(errorMsg);
+
+            // 3. Log Failure in History (Now correctly deduplicated)
+            updateHistory(queryToRun, 'error', duration, 0);
         }
     };
 
@@ -226,12 +264,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
             // Data State
             query, setQuery, runQuery,
+            lastError,
+            clearError,
             graphData,
             selectedElement, selectionType, setSelection,
             history,
 
             // Connection Actions
-            connectDatabase, createNewDatabase, disconnectDatabase, removeRecentFile
+            connectDatabase, createNewDatabase, disconnectDatabase, removeRecentFile,
+
+            activeResultView, setActiveResultView, queryResultMetadata
         }}>
             {children}
         </AppContext.Provider>

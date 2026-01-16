@@ -6,16 +6,16 @@
         xmlns="http://www.w3.org/2000/svg"
 >
     <rect
-            x="9"
-            y="9"
-            width="132"
-            height="132"
-            rx="30"
+            x="14.5"
+            y="14.5"
+            width="121"
+            height="121"
+            rx="27"
             fill="#000000"
     />
     <g
             fill="#818cf8"
-            transform="translate(8 8) scale(0.90)"
+            transform="translate(14 14) scale(0.81)"
     >
         <polygon points="33.6,52 43.9,62.3 85.3,62.3 95.6,52"/>
         <polygon points="64.6,67.5 33.6,98.5 49.1,98.5 80.1,67.5"/>

@@ -15,8 +15,15 @@ export interface GraphEdge {
 }
 
 export interface QueryResult {
+    // Graph components
     nodes: GraphNode[];
     edges: GraphEdge[];
+
+    // Tabular components
+    columns: string[];          // e.g., ["f.path", "func.name"]
+    rows: any[][];             // 2D array of result values
+
+    // Metadata
     duration_ms: number;
 }
 

@@ -46,29 +46,61 @@ impl MetrixDB {
     pub fn execute(&self, cypher: &str) -> Result<QueryResult, String> {
         info!("Executing Cypher: {}", cypher);
 
-        let c_cypher = CString::new(cypher).map_err(|_| "Invalid query string")?;
+        // 1. Prepare the query string for the C API
+        let c_cypher =
+            CString::new(cypher).map_err(|_| "Invalid query string (contains null byte)")?;
         let start = Instant::now();
 
+        // 2. Call the C API to execute the query
+        // This returns a pointer to a Result object.
         let res_ptr = unsafe { metrix_execute(self.ptr, c_cypher.as_ptr()) };
 
+        // 3. System-level check: Did the C function itself fail to allocate the Result object?
         if res_ptr.is_null() {
-            let err = Self::get_last_error();
-            error!("Execution failed: {}", err);
-            return Err(err);
+            let system_err = Self::get_last_error();
+            error!(
+                "System Failure: metrix_execute returned NULL. Details: {}",
+                system_err
+            );
+            return Err(system_err);
         }
 
-        let mut result = QueryResult::default();
-
         unsafe {
-            // Process Columns
+            // 4. Logic-level check: Did the engine encounter a Syntax or Runtime error?
+            // Even if res_ptr is valid, the query inside might have failed.
+            if !metrix_result_is_success(res_ptr) {
+                let err_ptr = metrix_result_get_error(res_ptr);
+                let err_msg = if err_ptr.is_null() {
+                    "Unknown database execution error".to_string()
+                } else {
+                    CStr::from_ptr(err_ptr).to_string_lossy().into_owned()
+                };
+
+                // CRITICAL: Must close the result handle to prevent memory leaks in C++
+                metrix_result_close(res_ptr);
+
+                error!("Database Execution Error: {}", err_msg);
+                return Err(err_msg);
+            }
+
+            // 5. Successful Execution: Start parsing data
+            let mut result = QueryResult::default();
+
+            // 5a. Extract Metadata (Column Names)
             let col_count = metrix_result_column_count(res_ptr);
+            debug!("Execution successful. Columns found: {}", col_count);
+
             for i in 0..col_count {
                 let name_ptr = metrix_result_column_name(res_ptr, i);
-                let name = CStr::from_ptr(name_ptr).to_string_lossy().into_owned();
+                let name = if name_ptr.is_null() {
+                    format!("col_{}", i)
+                } else {
+                    CStr::from_ptr(name_ptr).to_string_lossy().into_owned()
+                };
                 result.columns.push(name);
             }
 
-            // Process Rows
+            // 5b. Iterate through the rows and parse values
             let mut row_count = 0;
             while metrix_result_next(res_ptr) {
                 row_count += 1;
@@ -77,16 +109,29 @@ impl MetrixDB {
                 for i in 0..col_count {
                     let val_type = metrix_result_get_type(res_ptr, i);
 
+                    // Route to appropriate parser based on C-enum type
                     let json_val = match val_type {
                         MetrixValueType::MX_NODE => self.parse_node(res_ptr, i, &mut result.nodes),
                         MetrixValueType::MX_EDGE => self.parse_edge(res_ptr, i, &mut result.edges),
                         MetrixValueType::MX_STRING => {
-                            let s = CStr::from_ptr(metrix_result_get_string(res_ptr, i));
-                            serde_json::Value::String(s.to_string_lossy().into_owned())
+                            let s_ptr = metrix_result_get_string(res_ptr, i);
+                            if s_ptr.is_null() {
+                                serde_json::Value::String("".to_string())
+                            } else {
+                                serde_json::Value::String(
+                                    CStr::from_ptr(s_ptr).to_string_lossy().into_owned(),
+                                )
+                            }
                         }
-                        MetrixValueType::MX_INT => serde_json::json!(metrix_result_get_int(res_ptr, i)),
-                        MetrixValueType::MX_DOUBLE => serde_json::json!(metrix_result_get_double(res_ptr, i)),
-                        MetrixValueType::MX_BOOL => serde_json::json!(metrix_result_get_bool(res_ptr, i)),
+                        MetrixValueType::MX_INT => {
+                            serde_json::json!(metrix_result_get_int(res_ptr, i))
+                        }
+                        MetrixValueType::MX_DOUBLE => {
+                            serde_json::json!(metrix_result_get_double(res_ptr, i))
+                        }
+                        MetrixValueType::MX_BOOL => {
+                            serde_json::json!(metrix_result_get_bool(res_ptr, i))
+                        }
                         MetrixValueType::MX_NULL => serde_json::Value::Null,
                     };
                     row_data.push(json_val);
@@ -94,12 +139,14 @@ impl MetrixDB {
                 result.rows.push(row_data);
             }
 
+            // 6. Cleanup result handle and record performance metrics
             metrix_result_close(res_ptr);
-            debug!("Scan complete. Rows: {}", row_count);
-        }
 
-        result.duration_ms = start.elapsed().as_millis();
-        Ok(result)
+            debug!("Scan finished. Rows extracted: {}", row_count);
+            result.duration_ms = start.elapsed().as_millis();
+
+            Ok(result)
+        }
     }
 
     // --- Internal Helpers ---
@@ -123,28 +170,54 @@ impl MetrixDB {
         }
     }
 
-    unsafe fn parse_node(&self, res: *mut MetrixResult_T, col: i32, list: &mut Vec<GraphNode>) -> serde_json::Value {
-        let mut raw = MetrixNode { id: 0, label: ptr::null() };
+    unsafe fn parse_node(
+        &self,
+        res: *mut MetrixResult_T,
+        col: i32,
+        list: &mut Vec<GraphNode>,
+    ) -> serde_json::Value {
+        let mut raw = MetrixNode {
+            id: 0,
+            label: ptr::null(),
+        };
         if metrix_result_get_node(res, col, &mut raw) {
             let props = self.parse_props(res, col);
             let label = if !raw.label.is_null() {
                 CStr::from_ptr(raw.label).to_string_lossy().into_owned()
-            } else { "Node".to_string() };
+            } else {
+                "Node".to_string()
+            };
 
-            let node = GraphNode { id: raw.id, label, properties: props };
+            let node = GraphNode {
+                id: raw.id,
+                label,
+                properties: props,
+            };
             list.push(node);
             return serde_json::json!({ "_type": "node", "id": raw.id });
         }
         serde_json::Value::Null
     }
 
-    unsafe fn parse_edge(&self, res: *mut MetrixResult_T, col: i32, list: &mut Vec<GraphEdge>) -> serde_json::Value {
-        let mut raw = MetrixEdge { id: 0, source_id: 0, target_id: 0, type_: ptr::null() };
+    unsafe fn parse_edge(
+        &self,
+        res: *mut MetrixResult_T,
+        col: i32,
+        list: &mut Vec<GraphEdge>,
+    ) -> serde_json::Value {
+        let mut raw = MetrixEdge {
+            id: 0,
+            source_id: 0,
+            target_id: 0,
+            type_: ptr::null(),
+        };
         if metrix_result_get_edge(res, col, &mut raw) {
             let props = self.parse_props(res, col);
             let label = if !raw.type_.is_null() {
                 CStr::from_ptr(raw.type_).to_string_lossy().into_owned()
-            } else { "Edge".to_string() };
+            } else {
+                "Edge".to_string()
+            };
 
             let edge = GraphEdge {
                 id: raw.id,
@@ -161,8 +234,11 @@ impl MetrixDB {
 
     unsafe fn parse_props(&self, res: *mut MetrixResult_T, col: i32) -> serde_json::Value {
         let ptr = metrix_result_get_props_json(res, col);
-        if ptr.is_null() { return serde_json::json!({}); }
-        serde_json::from_str(&CStr::from_ptr(ptr).to_string_lossy()).unwrap_or(serde_json::json!({}))
+        if ptr.is_null() {
+            return serde_json::json!({});
+        }
+        serde_json::from_str(&CStr::from_ptr(ptr).to_string_lossy())
+            .unwrap_or(serde_json::json!({}))
     }
 }
 

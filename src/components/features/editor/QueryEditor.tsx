@@ -1,54 +1,73 @@
+import React from 'react';
 import {useApp} from '@/context/AppStore';
 import {Play, Eraser} from 'lucide-react';
+import {ErrorBanner} from './ErrorBanner'; // Import the new banner
 
-export const QueryEditor = () => {
+export const QueryEditor: React.FC = () => {
     const {query, setQuery, runQuery, isConnected} = useApp();
 
     return (
-        <div className="flex flex-col h-full bg-background">
-            <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/20">
+        <div className="flex flex-col h-full bg-zinc-950 relative overflow-hidden group">
+
+            {/* 1. Toolbar */}
+            <div
+                className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 bg-zinc-900/20 shrink-0">
                 <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-primary/50"></span>
-                    <span className="text-xs font-medium text-muted-foreground">CYPHER EDITOR</span>
+                    <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"/>
+                    <span className="text-[10px] font-black uppercase tracking-[2px] text-zinc-500">
+                        Cypher Editor
+                    </span>
                 </div>
+
                 <div className="flex gap-2">
                     <button
                         onClick={() => setQuery('')}
-                        className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
-                        title="Clear"
+                        className="p-1.5 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800 rounded transition-colors"
+                        title="Clear Editor"
                     >
                         <Eraser size={14}/>
                     </button>
                     <button
-                        // Wrapped in arrow function to avoid passing Event object as query string
                         onClick={() => runQuery()}
                         disabled={!isConnected}
-                        className="flex items-center gap-2 bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed text-primary-foreground px-3 py-1.5 rounded-md text-xs font-medium transition-all shadow-sm"
+                        className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:grayscale text-white px-3 py-1 rounded-md text-xs font-bold transition-all shadow-lg active:scale-95"
                     >
                         <Play size={12} fill="currentColor"/> Run Query
                     </button>
                 </div>
             </div>
 
-            <div className="flex-1 relative group">
+            {/* 2. Main Editor Area */}
+            <div className="flex-1 relative min-h-0">
                 <textarea
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    // Wrapped here too for consistency
                     onKeyDown={(e) => {
                         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                             e.preventDefault();
                             runQuery();
                         }
                     }}
-                    className="w-full h-full bg-background p-4 font-mono text-sm text-foreground resize-none focus:outline-none placeholder:text-muted-foreground/40 leading-relaxed selection:bg-primary/20"
-                    placeholder="// Enter your Cypher query here..."
+                    className="w-full h-full bg-transparent p-4 font-mono text-[13px] text-zinc-300 resize-none focus:outline-none placeholder:text-zinc-800 leading-relaxed selection:bg-indigo-500/30"
+                    placeholder="// Type your query here..."
                     spellCheck={false}
                 />
+
+                {/*
+                    ZEN MODE ERROR BANNER:
+                    Appears absolutely at the bottom of the editor area.
+                */}
+                <ErrorBanner/>
+
+                {/* Connection Guard Overlay */}
                 {!isConnected && (
                     <div
-                        className="absolute inset-0 bg-background/50 backdrop-blur-[1px] flex items-center justify-center pointer-events-none">
-                        <span className="text-sm text-muted-foreground bg-muted px-4 py-2 rounded-full border">Connect to a database to start</span>
+                        className="absolute inset-0 bg-zinc-950/60 backdrop-blur-[2px] flex items-center justify-center pointer-events-none z-30">
+                        <div className="bg-zinc-900 border border-zinc-800 px-4 py-2 rounded-full shadow-2xl">
+                            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                                Connect to database to unlock editor
+                            </span>
+                        </div>
                     </div>
                 )}
             </div>
